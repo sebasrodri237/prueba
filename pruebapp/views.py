@@ -1,3 +1,8 @@
-from django.shortcuts import render
+from rest_framework import viewsets
+from .models import Reunion
+from .serializers import ReunionSerializer
 
-# Create your views here.
+class ReunionViewSet(viewsets.ModelViewSet):
+    queryset = Reunion.objects.all()
+    serializer_class = ReunionSerializer
+
