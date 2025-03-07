@@ -6,7 +6,10 @@ from django.db.models import Q
 from twilio.twiml.messaging_response import MessagingResponse
 from .models import Reunion
 from .serializers import ReunionSerializer
+from rest_framework.decorators import permission_classes
+from rest_framework.permissions import AllowAny
 
+@permission_classes([AllowAny])
 class ReunionViewSet(viewsets.ModelViewSet):
     queryset = Reunion.objects.all()
     serializer_class = ReunionSerializer
@@ -30,6 +33,7 @@ def responder_sms(texto):
     return Response(str(respuesta), content_type="application/xml")
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def procesar_solicitud(request):
     data = request.data if request.content_type == "application/json" else request.POST
     mensaje = data.get("Body", "").strip()
@@ -70,6 +74,7 @@ def procesar_solicitud(request):
 
     return responder_sms("⚠️ Solicitud no reconocida.")
 
+@permission_classes([AllowAny])
 def agendar_reunion(data):
     serializer = ReunionSerializer(data=data)
     if serializer.is_valid():
@@ -77,6 +82,7 @@ def agendar_reunion(data):
         return responder_sms("✅ Reunión creada exitosamente.")
     return responder_sms("⚠️ Error al crear la reunión.")
 
+@permission_classes([AllowAny])
 def modificar_reunion(data):
     try:
         reunion = Reunion.objects.get(nombre=data.get("nombre"))
@@ -88,6 +94,7 @@ def modificar_reunion(data):
     except Reunion.DoesNotExist:
         return responder_sms("⚠️ Reunión no encontrada.")
 
+@permission_classes([AllowAny])
 def ver_reuniones():
     reuniones = Reunion.objects.all()
     if not reuniones:
@@ -95,6 +102,7 @@ def ver_reuniones():
     texto = "\n".join([f"{r.nombre} - {r.fecha} {r.hora_inicio}" for r in reuniones])
     return responder_sms(f"📅 Reuniones:\n{texto}")
 
+@permission_classes([AllowAny])
 def eliminar_reunion(data):
     try:
         reunion = Reunion.objects.get(nombre=data.get("nombre"))
@@ -104,5 +112,6 @@ def eliminar_reunion(data):
         return responder_sms("⚠️ Reunión no encontrada.")
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def whatsapp_webhook(request):
     return procesar_solicitud(request)
