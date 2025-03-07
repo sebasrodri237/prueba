@@ -42,14 +42,21 @@ def procesar_mensaje(mensaje):
 
 def crear_reunion(mensaje):
     try:
-        partes = mensaje.split(" ", 5)  # Permitir capturar el nombre con espacios
-        nombre = partes[2]
+        partes = mensaje.split()
+        
+        if len(partes) < 5:
+            return "⚠️ Formato incorrecto. Usa: 'crear reunión Nombre YYYY-MM-DD HH:MM HH:MM'"
+        
+        nombre = partes[2]  # El tercer elemento es el nombre de la reunión
         fecha = parse_date(partes[3])
         hora_inicio = parse_time(partes[4])
         hora_fin = parse_time(partes[5])
 
+        if not fecha or not hora_inicio or not hora_fin:
+            return "⚠️ Error en la fecha u hora. Usa el formato YYYY-MM-DD HH:MM HH:MM."
+
         Reunion.objects.create(
-            usuario_id=1,  # Aquí podrías enlazar con el número de WhatsApp del usuario
+            usuario_id=1,  # 🔹 Puedes cambiar esto para enlazar con el usuario real
             nombre=nombre,
             fecha=fecha,
             hora_inicio=hora_inicio,
@@ -60,6 +67,7 @@ def crear_reunion(mensaje):
 
     except Exception as e:
         return f"⚠️ Error al crear la reunión: {str(e)}"
+
 
 def editar_reunion(mensaje):
     try:
