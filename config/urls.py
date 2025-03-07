@@ -1,13 +1,11 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from pruebapp.views import ReunionViewSet, whatsapp_webhook
+from pruebapp.views import ReunionViewSet, procesar_solicitud
 
 router = DefaultRouter()
 router.register(r'reuniones', ReunionViewSet)
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/', include(router.urls)),
-    path('whatsapp-webhook/', whatsapp_webhook, name='whatsapp_webhook'),
+    path("api/whatsapp-webhook/", procesar_solicitud, name="whatsapp-webhook"),
 ]
