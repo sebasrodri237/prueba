@@ -1,13 +1,11 @@
-from django.http import JsonResponse
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
+from django.http import HttpResponse
+from rest_framework import viewsets
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from django.db.models import Q
 from twilio.twiml.messaging_response import MessagingResponse
 from .models import Reunion
 from .serializers import ReunionSerializer
-from rest_framework.decorators import permission_classes
-from rest_framework.permissions import AllowAny
 
 @permission_classes([AllowAny])
 class ReunionViewSet(viewsets.ModelViewSet):
@@ -28,17 +26,19 @@ class ReunionViewSet(viewsets.ModelViewSet):
         return conflictos
 
 def responder_sms(texto):
+    """Genera una respuesta XML válida para Twilio."""
     respuesta = MessagingResponse()
     respuesta.message(texto)
-    return Response(str(respuesta), content_type="application/xml")
+    return HttpResponse(str(respuesta), content_type="application/xml")
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def procesar_solicitud(request):
+    """Procesa los mensajes entrantes de WhatsApp y ejecuta la acción correspondiente."""
     data = request.data if request.content_type == "application/json" else request.POST
-    mensaje = data.get("Body", "").strip()
+    mensaje = data.get("Body", "").strip().lower()
 
-    if mensaje.lower().startswith("agendar"):
+    if mensaje.startswith("agendar"):
         partes = mensaje.split(",")
         if len(partes) == 5:
             data = {
@@ -49,27 +49,24 @@ def procesar_solicitud(request):
                 "hora_fin": partes[4].strip()
             }
             return agendar_reunion(data)
-    
-    elif mensaje.lower().startswith("modificar"):
+
+    elif mensaje.startswith("modificar"):
         partes = mensaje.split(",")
         if len(partes) >= 2:
-            data = {
-                "solicitud": "modificar",
-                "nombre": partes[1].strip()
-            }
+            data = {"solicitud": "modificar", "nombre": partes[1].strip()}
             if len(partes) == 5:
                 data["fecha"] = partes[2].strip()
                 data["hora_inicio"] = partes[3].strip()
                 data["hora_fin"] = partes[4].strip()
             return modificar_reunion(data)
 
-    elif mensaje.lower().startswith("ver reuniones"):
+    elif mensaje.startswith("ver reuniones"):
         return ver_reuniones()
 
-    elif mensaje.lower().startswith("eliminar"):
+    elif mensaje.startswith("eliminar"):
         partes = mensaje.split(",")
         if len(partes) == 2:
-            data = {"solicitud": "eliminar reunión", "nombre": partes[1].strip()}
+            data = {"solicitud": "eliminar", "nombre": partes[1].strip()}
             return eliminar_reunion(data)
 
     return responder_sms("⚠️ Solicitud no reconocida.")
@@ -98,7 +95,7 @@ def modificar_reunion(data):
 def ver_reuniones():
     reuniones = Reunion.objects.all()
     if not reuniones:
-        return responder_sms("No hay reuniones agendadas.")
+        return responder_sms("📅 No hay reuniones agendadas.")
     texto = "\n".join([f"{r.nombre} - {r.fecha} {r.hora_inicio}" for r in reuniones])
     return responder_sms(f"📅 Reuniones:\n{texto}")
 
@@ -114,4 +111,5 @@ def eliminar_reunion(data):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def whatsapp_webhook(request):
+    """Webhook de Twilio para recibir y procesar mensajes de WhatsApp."""
     return procesar_solicitud(request)
