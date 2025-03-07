@@ -8,67 +8,56 @@ import json
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from django.db.models import Q
-from django.http import JsonResponse
 
 @csrf_exempt
 def whatsapp_webhook(request):
     if request.method == "POST":
-        try:
-            if request.content_type == "application/json":
-                data = json.loads(request.body.decode("utf-8"))
-            else:
-                data = request.POST  # Twilio envía datos en este formato
+        from_number = request.POST.get("From")  # Número del usuario
+        mensaje = request.POST.get("Body", "").strip().lower()  # Mensaje recibido
 
-            from_number = data.get("From", "")
-            mensaje = data.get("Body", "").strip().lower()
+        respuesta_texto = procesar_mensaje(mensaje)
 
-            respuesta_texto = procesar_mensaje(mensaje)
-
-            twilio_resp = MessagingResponse()
-            twilio_resp.message(respuesta_texto)
-
-            return HttpResponse(str(twilio_resp), content_type="text/xml")
+        twilio_resp = MessagingResponse()
+        twilio_resp.message(respuesta_texto)
         
-        except json.JSONDecodeError:
-            return JsonResponse({"error": "Formato JSON inválido"}, status=400)
+        return HttpResponse(str(twilio_resp), content_type="text/xml")  # ⬅️ Cambio importante
 
-    return JsonResponse({"mensaje": "🟢 Webhook activo."}, status=200)
+    return HttpResponse("🟢 Webhook activo.", content_type="text/plain")
 
-def procesar_mensaje(data):
-    solicitud = data.get("solicitud", "").lower()
+def procesar_mensaje(mensaje):
+    """ Analiza el mensaje y ejecuta la acción correspondiente """
+    if "crear reunión" in mensaje:
+        return crear_reunion(mensaje)
 
-    if solicitud == "crear_reunion":
-        return crear_reunion(data)
-
-    elif solicitud == "listar_reuniones":
+    elif "listar reuniones" in mensaje:
         return listar_reuniones()
     
-    elif solicitud == "cancelar_reunion":
-        return cancelar_reunion(data)
+    elif "editar reunion" in mensaje:
+        return listar_reuniones()
 
-    return "❌ No entiendo la solicitud. Prueba con JSON válido."
+    elif "cancelar reunión" in mensaje:
+        return cancelar_reunion(mensaje)
 
+    return "❌ No entiendo el mensaje. Prueba con: 'crear reunión', 'listar reuniones', 'cancelar reunión'."
 
-def crear_reunion(data):
+def crear_reunion(mensaje):
     try:
-        nombre = data.get("nombre", "Reunión sin título")  # Nombre opcional
-        fecha = parse_date(data.get("fecha"))
-        hora_inicio = parse_time(data.get("hora_inicio"))
-        hora_fin = parse_time(data.get("hora_fin"))
+        partes = mensaje.split()
+        fecha = parse_date(partes[2])
+        hora_inicio = parse_time(partes[3])
+        hora_fin = parse_time(partes[4])
 
-        nueva_reunion = Reunion.objects.create(
-            usuario_id=data.get("usuario_id", 1),
-            nombre=nombre,
+        Reunion.objects.create(
+            usuario_id=1,  # Aquí podrías enlazar con el número de WhatsApp del usuario
             fecha=fecha,
             hora_inicio=hora_inicio,
             hora_fin=hora_fin
         )
 
-        return f"✅ Reunión '{nombre}' creada el {fecha} de {hora_inicio} a {hora_fin}."
+        return f"✅ Reunión creada el {fecha} de {hora_inicio} a {hora_fin}."
 
     except Exception as e:
         return f"⚠️ Error al crear la reunión: {str(e)}"
-
 
 def listar_reuniones():
     reuniones = Reunion.objects.filter(usuario_id=1)
@@ -76,7 +65,7 @@ def listar_reuniones():
         return "🔍 No tienes reuniones programadas."
 
     reuniones_serializadas = ReunionSerializer(reuniones, many=True).data
-    return json.dumps({"reuniones": reuniones_serializadas}, indent=2, ensure_ascii=False)
+    return f"📅 Tus reuniones: {json.dumps(reuniones_serializadas, indent=2)}"
 
 def cancelar_reunion(mensaje):
     try:
