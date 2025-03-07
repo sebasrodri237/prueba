@@ -32,32 +32,58 @@ def procesar_mensaje(mensaje):
     elif "listar reuniones" in mensaje:
         return listar_reuniones()
     
-    elif "editar reunion" in mensaje:
-        return listar_reuniones()
+    elif "editar reunión" in mensaje:
+        return editar_reunion(mensaje)
 
     elif "cancelar reunión" in mensaje:
         return cancelar_reunion(mensaje)
 
-    return "❌ No entiendo el mensaje. Prueba con: 'crear reunión', 'listar reuniones', 'cancelar reunión'."
+    return "❌ No entiendo el mensaje. Prueba con: 'crear reunión', 'listar reuniones', 'editar reunión', 'cancelar reunión'."
 
 def crear_reunion(mensaje):
     try:
-        partes = mensaje.split()
-        fecha = parse_date(partes[2])
-        hora_inicio = parse_time(partes[3])
-        hora_fin = parse_time(partes[4])
+        partes = mensaje.split(" ", 5)  # Permitir capturar el nombre con espacios
+        nombre = partes[2]
+        fecha = parse_date(partes[3])
+        hora_inicio = parse_time(partes[4])
+        hora_fin = parse_time(partes[5])
 
         Reunion.objects.create(
             usuario_id=1,  # Aquí podrías enlazar con el número de WhatsApp del usuario
+            nombre=nombre,
             fecha=fecha,
             hora_inicio=hora_inicio,
             hora_fin=hora_fin
         )
 
-        return f"✅ Reunión creada el {fecha} de {hora_inicio} a {hora_fin}."
+        return f"✅ Reunión '{nombre}' creada el {fecha} de {hora_inicio} a {hora_fin}."
 
     except Exception as e:
         return f"⚠️ Error al crear la reunión: {str(e)}"
+
+def editar_reunion(mensaje):
+    try:
+        partes = mensaje.split(" ", 6)
+        reunion_id = int(partes[2])
+        nombre = partes[3]
+        fecha = parse_date(partes[4])
+        hora_inicio = parse_time(partes[5])
+        hora_fin = parse_time(partes[6])
+
+        reunion = Reunion.objects.get(id=reunion_id, usuario_id=1)
+        reunion.nombre = nombre
+        reunion.fecha = fecha
+        reunion.hora_inicio = hora_inicio
+        reunion.hora_fin = hora_fin
+        reunion.save()
+
+        return f"✏️ Reunión {reunion_id} editada a '{nombre}' el {fecha} de {hora_inicio} a {hora_fin}."
+
+    except Reunion.DoesNotExist:
+        return "⚠️ No se encontró la reunión."
+    
+    except Exception as e:
+        return f"⚠️ Error al editar reunión: {str(e)}"
 
 def listar_reuniones():
     reuniones = Reunion.objects.filter(usuario_id=1)
@@ -137,20 +163,6 @@ class ReunionViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        user_id = request.data.get("usuario", instance.usuario_id)
-        fecha = request.data.get("fecha", instance.fecha)
-        hora_inicio = request.data.get("hora_inicio", instance.hora_inicio)
-        hora_fin = request.data.get("hora_fin", instance.hora_fin)
-
-        conflictos = self.find_conflicts(user_id, fecha, hora_inicio, hora_fin, exclude_id=instance.id)
-
-        if conflictos.exists():
-            conflictos_serializados = ReunionSerializer(conflictos, many=True).data
-            return Response({
-                "status": "⚠️ Conflicto de horario detectado.",
-                "conflictos": conflictos_serializados
-            }, status=status.HTTP_400_BAD_REQUEST)
-
         response = super().update(request, *args, **kwargs)
 
         return Response({
