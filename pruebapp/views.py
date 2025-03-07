@@ -1,13 +1,85 @@
 from django.http import HttpResponse
-from rest_framework import viewsets
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
-from django.db.models import Q
+from django.views.decorators.csrf import csrf_exempt
 from twilio.twiml.messaging_response import MessagingResponse
 from .models import Reunion
 from .serializers import ReunionSerializer
+from django.utils.dateparse import parse_date, parse_time
+import json
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from django.db.models import Q
 
-@permission_classes([AllowAny])
+@csrf_exempt
+def whatsapp_webhook(request):
+    if request.method == "POST":
+        from_number = request.POST.get("From")  # Número del usuario
+        mensaje = request.POST.get("Body", "").strip().lower()  # Mensaje recibido
+
+        respuesta_texto = procesar_mensaje(mensaje)
+
+        twilio_resp = MessagingResponse()
+        twilio_resp.message(respuesta_texto)
+        
+        return HttpResponse(str(twilio_resp), content_type="text/xml")  # ⬅️ Cambio importante
+
+    return HttpResponse("🟢 Webhook activo.", content_type="text/plain")
+
+def procesar_mensaje(mensaje):
+    """ Analiza el mensaje y ejecuta la acción correspondiente """
+    if "crear reunión" in mensaje:
+        return crear_reunion(mensaje)
+
+    elif "listar reuniones" in mensaje:
+        return listar_reuniones()
+    
+    elif "editar reunion" in mensaje:
+        return listar_reuniones()
+
+    elif "cancelar reunión" in mensaje:
+        return cancelar_reunion(mensaje)
+
+    return "❌ No entiendo el mensaje. Prueba con: 'crear reunión', 'listar reuniones', 'cancelar reunión'."
+
+def crear_reunion(mensaje):
+    try:
+        partes = mensaje.split()
+        fecha = parse_date(partes[2])
+        hora_inicio = parse_time(partes[3])
+        hora_fin = parse_time(partes[4])
+
+        Reunion.objects.create(
+            usuario_id=1,  # Aquí podrías enlazar con el número de WhatsApp del usuario
+            fecha=fecha,
+            hora_inicio=hora_inicio,
+            hora_fin=hora_fin
+        )
+
+        return f"✅ Reunión creada el {fecha} de {hora_inicio} a {hora_fin}."
+
+    except Exception as e:
+        return f"⚠️ Error al crear la reunión: {str(e)}"
+
+def listar_reuniones():
+    reuniones = Reunion.objects.filter(usuario_id=1)
+    if not reuniones.exists():
+        return "🔍 No tienes reuniones programadas."
+
+    reuniones_serializadas = ReunionSerializer(reuniones, many=True).data
+    return f"📅 Tus reuniones: {json.dumps(reuniones_serializadas, indent=2)}"
+
+def cancelar_reunion(mensaje):
+    try:
+        partes = mensaje.split()
+        reunion_id = int(partes[2])
+        Reunion.objects.get(id=reunion_id, usuario_id=1).delete()
+        return f"🗑️ Reunión {reunion_id} cancelada con éxito."
+
+    except Reunion.DoesNotExist:
+        return "⚠️ No se encontró la reunión."
+
+    except Exception as e:
+        return f"⚠️ Error al cancelar reunión: {str(e)}"
+
 class ReunionViewSet(viewsets.ModelViewSet):
     queryset = Reunion.objects.all()
     serializer_class = ReunionSerializer
@@ -25,91 +97,72 @@ class ReunionViewSet(viewsets.ModelViewSet):
 
         return conflictos
 
-def responder_sms(texto):
-    """Genera una respuesta XML válida para Twilio."""
-    respuesta = MessagingResponse()
-    respuesta.message(texto)
-    return HttpResponse(str(respuesta), content_type="application/xml")
+    def list(self, request, *args, **kwargs):
+        nombre = request.query_params.get("nombre", None)
+        fecha = request.query_params.get("fecha", None)
+        hora = request.query_params.get("hora", None)
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def procesar_solicitud(request):
-    """Procesa los mensajes entrantes de WhatsApp y ejecuta la acción correspondiente."""
-    data = request.data if request.content_type == "application/json" else request.POST
-    mensaje = data.get("Body", "").strip().lower()
+        queryset = self.queryset
+        if nombre:
+            queryset = queryset.filter(nombre__icontains=nombre)
+        if fecha and not hora:
+            queryset = queryset.filter(fecha=fecha)
+        if fecha and hora:
+            queryset = queryset.filter(fecha=fecha, hora_inicio=hora)
 
-    if mensaje.startswith("agendar"):
-        partes = mensaje.split(",")
-        if len(partes) == 5:
-            data = {
-                "solicitud": "agendar",
-                "nombre": partes[1].strip(),
-                "fecha": partes[2].strip(),
-                "hora_inicio": partes[3].strip(),
-                "hora_fin": partes[4].strip()
-            }
-            return agendar_reunion(data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    elif mensaje.startswith("modificar"):
-        partes = mensaje.split(",")
-        if len(partes) >= 2:
-            data = {"solicitud": "modificar", "nombre": partes[1].strip()}
-            if len(partes) == 5:
-                data["fecha"] = partes[2].strip()
-                data["hora_inicio"] = partes[3].strip()
-                data["hora_fin"] = partes[4].strip()
-            return modificar_reunion(data)
+    def create(self, request, *args, **kwargs):
+        user_id = request.data.get("usuario")
+        fecha = request.data.get("fecha")
+        hora_inicio = request.data.get("hora_inicio")
+        hora_fin = request.data.get("hora_fin")
 
-    elif mensaje.startswith("ver reuniones"):
-        return ver_reuniones()
+        conflictos = self.find_conflicts(user_id, fecha, hora_inicio, hora_fin)
 
-    elif mensaje.startswith("eliminar"):
-        partes = mensaje.split(",")
-        if len(partes) == 2:
-            data = {"solicitud": "eliminar", "nombre": partes[1].strip()}
-            return eliminar_reunion(data)
+        if conflictos.exists():
+            conflictos_serializados = ReunionSerializer(conflictos, many=True).data
+            return Response({
+                "status": "⚠️ Conflicto de horario detectado.",
+                "conflictos": conflictos_serializados
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-    return responder_sms("⚠️ Solicitud no reconocida.")
+        response = super().create(request, *args, **kwargs)
 
-@permission_classes([AllowAny])
-def agendar_reunion(data):
-    serializer = ReunionSerializer(data=data)
-    if serializer.is_valid():
-        serializer.save()
-        return responder_sms("✅ Reunión creada exitosamente.")
-    return responder_sms("⚠️ Error al crear la reunión.")
+        return Response({
+            "mensaje": "✅ Reunión creada exitosamente.",
+            "reunion": response.data
+        }, status=status.HTTP_201_CREATED)
 
-@permission_classes([AllowAny])
-def modificar_reunion(data):
-    try:
-        reunion = Reunion.objects.get(nombre=data.get("nombre"))
-        serializer = ReunionSerializer(reunion, data=data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return responder_sms("✅ Reunión modificada exitosamente.")
-        return responder_sms("⚠️ Error al modificar la reunión.")
-    except Reunion.DoesNotExist:
-        return responder_sms("⚠️ Reunión no encontrada.")
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        user_id = request.data.get("usuario", instance.usuario_id)
+        fecha = request.data.get("fecha", instance.fecha)
+        hora_inicio = request.data.get("hora_inicio", instance.hora_inicio)
+        hora_fin = request.data.get("hora_fin", instance.hora_fin)
 
-@permission_classes([AllowAny])
-def ver_reuniones():
-    reuniones = Reunion.objects.all()
-    if not reuniones:
-        return responder_sms("📅 No hay reuniones agendadas.")
-    texto = "\n".join([f"{r.nombre} - {r.fecha} {r.hora_inicio}" for r in reuniones])
-    return responder_sms(f"📅 Reuniones:\n{texto}")
+        conflictos = self.find_conflicts(user_id, fecha, hora_inicio, hora_fin, exclude_id=instance.id)
 
-@permission_classes([AllowAny])
-def eliminar_reunion(data):
-    try:
-        reunion = Reunion.objects.get(nombre=data.get("nombre"))
-        reunion.delete()
-        return responder_sms("✅ Reunión eliminada exitosamente.")
-    except Reunion.DoesNotExist:
-        return responder_sms("⚠️ Reunión no encontrada.")
+        if conflictos.exists():
+            conflictos_serializados = ReunionSerializer(conflictos, many=True).data
+            return Response({
+                "status": "⚠️ Conflicto de horario detectado.",
+                "conflictos": conflictos_serializados
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def whatsapp_webhook(request):
-    """Webhook de Twilio para recibir y procesar mensajes de WhatsApp."""
-    return procesar_solicitud(request)
+        response = super().update(request, *args, **kwargs)
+
+        return Response({
+            "mensaje": "✅ Reunión modificada exitosamente.",
+            "reunion": response.data
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        response = super().destroy(request, *args, **kwargs)
+
+        return Response({
+            "mensaje": "✅ Reunión eliminada exitosamente.",
+            "reunion": {"id": instance.id, "nombre": instance.nombre, "fecha": instance.fecha}
+        }, status=status.HTTP_200_OK)
