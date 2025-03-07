@@ -84,12 +84,19 @@ def crear_reunion(mensaje):
 
 def editar_reunion(mensaje):
     try:
-        partes = mensaje.split(" ", 6)
+        partes = mensaje.split()
+
+        if len(partes) < 6:
+            return "⚠️ Formato incorrecto. Usa: 'editar reunión ID Nombre YYYY-MM-DD HH:MM HH:MM'"
+
         reunion_id = int(partes[2])
-        nombre = partes[3]
-        fecha = parse_date(partes[4])
-        hora_inicio = parse_time(partes[5])
-        hora_fin = parse_time(partes[6])
+        nombre = " ".join(partes[3:-3])  
+        fecha = parse_date(partes[-3])
+        hora_inicio = parse_time(partes[-2])
+        hora_fin = parse_time(partes[-1])
+
+        if not fecha or not hora_inicio or not hora_fin:
+            return "⚠️ Error en la fecha u hora. Usa el formato YYYY-MM-DD HH:MM HH:MM."
 
         reunion = Reunion.objects.get(id=reunion_id, usuario_id=1)
         reunion.nombre = nombre
@@ -98,13 +105,14 @@ def editar_reunion(mensaje):
         reunion.hora_fin = hora_fin
         reunion.save()
 
-        return f"✏️ Reunión {reunion_id} editada a '{nombre}' el {fecha} de {hora_inicio} a {hora_fin}."
+        return f"✏️ Reunión {reunion_id} actualizada a '{nombre}' el {fecha} de {hora_inicio} a {hora_fin}."
 
     except Reunion.DoesNotExist:
         return "⚠️ No se encontró la reunión."
     
     except Exception as e:
         return f"⚠️ Error al editar reunión: {str(e)}"
+
 
 def listar_reuniones():
     reuniones = Reunion.objects.filter(usuario_id=1)
