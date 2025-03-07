@@ -43,20 +43,21 @@ def procesar_mensaje(mensaje):
 def crear_reunion(mensaje):
     try:
         partes = mensaje.split()
-        
-        if len(partes) < 5:
+
+        if len(partes) < 6:
             return "⚠️ Formato incorrecto. Usa: 'crear reunión Nombre YYYY-MM-DD HH:MM HH:MM'"
-        
-        nombre = partes[2]  # El tercer elemento es el nombre de la reunión
-        fecha = parse_date(partes[3])
-        hora_inicio = parse_time(partes[4])
-        hora_fin = parse_time(partes[5])
+
+        # El nombre puede tener varias palabras, juntamos todo antes de la fecha
+        nombre = " ".join(partes[2:-3])  # Desde la 3ra palabra hasta la antepenúltima
+        fecha = parse_date(partes[-3])   # Tercera palabra desde el final
+        hora_inicio = parse_time(partes[-2])  # Segunda palabra desde el final
+        hora_fin = parse_time(partes[-1])  # Última palabra
 
         if not fecha or not hora_inicio or not hora_fin:
             return "⚠️ Error en la fecha u hora. Usa el formato YYYY-MM-DD HH:MM HH:MM."
 
         Reunion.objects.create(
-            usuario_id=1,  # 🔹 Puedes cambiar esto para enlazar con el usuario real
+            usuario_id=1,  
             nombre=nombre,
             fecha=fecha,
             hora_inicio=hora_inicio,
@@ -67,6 +68,7 @@ def crear_reunion(mensaje):
 
     except Exception as e:
         return f"⚠️ Error al crear la reunión: {str(e)}"
+
 
 
 def editar_reunion(mensaje):
