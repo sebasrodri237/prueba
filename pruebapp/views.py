@@ -1,130 +1,209 @@
-from django.http import JsonResponse, HttpResponse
+from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from twilio.twiml.messaging_response import MessagingResponse
 from .models import Reunion
 from .serializers import ReunionSerializer
 from django.utils.dateparse import parse_date, parse_time
 import json
+from rest_framework import viewsets, status
+from rest_framework.response import Response
 from django.db.models import Q
 
 @csrf_exempt
 def whatsapp_webhook(request):
     if request.method == "POST":
-        try:
-            if request.content_type == "application/json":
-                data = json.loads(request.body.decode("utf-8"))
-            else:
-                data = request.POST.dict()
+        from_number = request.POST.get("From")  # Número del usuario
+        mensaje = request.POST.get("Body", "").strip().lower()  # Mensaje recibido
 
-            solicitud = data.get("solicitud", "").lower()
-
-            if solicitud == "agendar":
-                respuesta = agendar_reunion(data)
-            elif solicitud == "listar":
-                respuesta = listar_reuniones(data)
-            elif solicitud == "editar":
-                respuesta = editar_reunion(data)
-            elif solicitud == "eliminar":
-                respuesta = eliminar_reunion(data)
-            else:
-                respuesta = "❌ Solicitud no reconocida."
-
-        except json.JSONDecodeError:
-            respuesta = "⚠️ Error: El formato del mensaje no es un JSON válido."
+        respuesta_texto = procesar_mensaje(mensaje)
 
         twilio_resp = MessagingResponse()
-        twilio_resp.message(respuesta)
-
-        return HttpResponse(str(twilio_resp), content_type="text/xml")
+        twilio_resp.message(respuesta_texto)
+        
+        return HttpResponse(str(twilio_resp), content_type="text/xml")  # ⬅️ Cambio importante
 
     return HttpResponse("🟢 Webhook activo.", content_type="text/plain")
 
-def agendar_reunion(data):
+def procesar_mensaje(mensaje):
+    """ Analiza el mensaje y ejecuta la acción correspondiente """
+    if "crear reunión" in mensaje:
+        return crear_reunion(mensaje)
+
+    elif "listar reuniones" in mensaje:
+        return listar_reuniones()
+    
+    elif "editar reunión" in mensaje:
+        return editar_reunion(mensaje)
+
+    elif "cancelar reunión" in mensaje:
+        return cancelar_reunion(mensaje)
+
+    return "❌ No entiendo el mensaje. Prueba con: 'crear reunión', 'listar reuniones', 'editar reunión', 'cancelar reunión'."
+
+def crear_reunion(mensaje):
     try:
-        nombre = data.get("nombre", "")
-        fecha = parse_date(data.get("fecha", ""))
-        hora_inicio = parse_time(data.get("hora_inicio", ""))
-        hora_fin = parse_time(data.get("hora_fin", ""))
+        partes = mensaje.split()
 
-        if not (nombre and fecha and hora_inicio and hora_fin):
-            return "⚠️ Datos insuficientes. Debes incluir nombre, fecha, hora de inicio y fin."
+        if len(partes) < 6:
+            return "⚠️ Formato incorrecto. Usa: 'crear reunión Nombre YYYY-MM-DD HH:MM HH:MM'"
 
+        nombre = " ".join(partes[2:-3])
+        fecha = parse_date(partes[-3])
+        hora_inicio = parse_time(partes[-2])
+        hora_fin = parse_time(partes[-1])
+
+        if not fecha or not hora_inicio or not hora_fin:
+            return "⚠️ Error en la fecha u hora. Usa el formato YYYY-MM-DD HH:MM HH:MM."
+
+        # Verificar conflictos
         conflictos = Reunion.objects.filter(
-            fecha=fecha,
-            hora_inicio__lt=hora_fin,
-            hora_fin__gt=hora_inicio
+            usuario_id=1,
+            fecha=fecha
+        ).filter(
+            Q(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio)
         )
 
         if conflictos.exists():
-            return "⚠️ No se puede agendar. Ya hay una reunión en ese horario."
+            return f"⚠️ No se puede crear la reunión. Ya tienes otra en ese horario."
 
+        # Crear reunión si no hay conflictos
         Reunion.objects.create(
+            usuario_id=1,  
             nombre=nombre,
             fecha=fecha,
             hora_inicio=hora_inicio,
             hora_fin=hora_fin
         )
 
-        return f"✅ Reunión '{nombre}' agendada para el {fecha} de {hora_inicio} a {hora_fin}."
+        return f"✅ Reunión '{nombre}' creada el {fecha} de {hora_inicio} a {hora_fin}."
 
     except Exception as e:
-        return f"⚠️ Error al agendar la reunión: {str(e)}"
+        return f"⚠️ Error al crear la reunión: {str(e)}"
 
-def listar_reuniones(data):
+
+
+def editar_reunion(mensaje):
     try:
-        reuniones = Reunion.objects.all()
-        if not reuniones.exists():
-            return "🔍 No hay reuniones programadas."
+        partes = mensaje.split()
 
-        reuniones_serializadas = ReunionSerializer(reuniones, many=True).data
-        return f"📅 Reuniones:\n{json.dumps(reuniones_serializadas, indent=2)}"
+        if len(partes) < 6:
+            return "⚠️ Formato incorrecto. Usa: 'editar reunión ID Nombre YYYY-MM-DD HH:MM HH:MM'"
 
-    except Exception as e:
-        return f"⚠️ Error al listar reuniones: {str(e)}"
+        reunion_id = int(partes[2])
+        nombre = " ".join(partes[3:-3])  
+        fecha = parse_date(partes[-3])
+        hora_inicio = parse_time(partes[-2])
+        hora_fin = parse_time(partes[-1])
 
-def editar_reunion(data):
-    try:
-        id_reunion = data.get("id_reunion")
-        nombre = data.get("nombre", "")
-        fecha = parse_date(data.get("fecha", ""))
-        hora_inicio = parse_time(data.get("hora_inicio", ""))
-        hora_fin = parse_time(data.get("hora_fin", ""))
+        if not fecha or not hora_inicio or not hora_fin:
+            return "⚠️ Error en la fecha u hora. Usa el formato YYYY-MM-DD HH:MM HH:MM."
 
-        if not id_reunion:
-            return "⚠️ Debes proporcionar el ID de la reunión a editar."
-
-        reunion = Reunion.objects.get(id=id_reunion)
-        if nombre:
-            reunion.nombre = nombre
-        if fecha:
-            reunion.fecha = fecha
-        if hora_inicio:
-            reunion.hora_inicio = hora_inicio
-        if hora_fin:
-            reunion.hora_fin = hora_fin
+        reunion = Reunion.objects.get(id=reunion_id, usuario_id=1)
+        reunion.nombre = nombre
+        reunion.fecha = fecha
+        reunion.hora_inicio = hora_inicio
+        reunion.hora_fin = hora_fin
         reunion.save()
 
-        return f"✏️ Reunión {id_reunion} actualizada."
+        return f"✏️ Reunión {reunion_id} actualizada a '{nombre}' el {fecha} de {hora_inicio} a {hora_fin}."
 
     except Reunion.DoesNotExist:
         return "⚠️ No se encontró la reunión."
-
+    
     except Exception as e:
-        return f"⚠️ Error al editar la reunión: {str(e)}"
+        return f"⚠️ Error al editar reunión: {str(e)}"
 
-def eliminar_reunion(data):
+
+def listar_reuniones():
+    reuniones = Reunion.objects.filter(usuario_id=1)
+    if not reuniones.exists():
+        return "🔍 No tienes reuniones programadas."
+
+    reuniones_serializadas = ReunionSerializer(reuniones, many=True).data
+    return f"📅 Tus reuniones: {json.dumps(reuniones_serializadas, indent=2)}"
+
+def cancelar_reunion(mensaje):
     try:
-        id_reunion = data.get("id_reunion")
-        if not id_reunion:
-            return "⚠️ Debes proporcionar el ID de la reunión a eliminar."
-
-        reunion = Reunion.objects.get(id=id_reunion)
-        reunion.delete()
-
-        return f"🗑️ Reunión {id_reunion} eliminada con éxito."
+        partes = mensaje.split()
+        reunion_id = int(partes[2])
+        Reunion.objects.get(id=reunion_id, usuario_id=1).delete()
+        return f"🗑️ Reunión {reunion_id} cancelada con éxito."
 
     except Reunion.DoesNotExist:
         return "⚠️ No se encontró la reunión."
 
     except Exception as e:
-        return f"⚠️ Error al eliminar la reunión: {str(e)}"
+        return f"⚠️ Error al cancelar reunión: {str(e)}"
+
+class ReunionViewSet(viewsets.ModelViewSet):
+    queryset = Reunion.objects.all()
+    serializer_class = ReunionSerializer
+
+    def find_conflicts(self, usuario_id, fecha, hora_inicio, hora_fin, exclude_id=None):
+        conflictos = Reunion.objects.filter(
+            usuario_id=usuario_id,
+            fecha=fecha
+        ).filter(
+            Q(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio)
+        )
+
+        if exclude_id:
+            conflictos = conflictos.exclude(id=exclude_id)
+
+        return conflictos
+
+    def list(self, request, *args, **kwargs):
+        nombre = request.query_params.get("nombre", None)
+        fecha = request.query_params.get("fecha", None)
+        hora = request.query_params.get("hora", None)
+
+        queryset = self.queryset
+        if nombre:
+            queryset = queryset.filter(nombre__icontains=nombre)
+        if fecha and not hora:
+            queryset = queryset.filter(fecha=fecha)
+        if fecha and hora:
+            queryset = queryset.filter(fecha=fecha, hora_inicio=hora)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def create(self, request, *args, **kwargs):
+        user_id = request.data.get("usuario")
+        fecha = request.data.get("fecha")
+        hora_inicio = request.data.get("hora_inicio")
+        hora_fin = request.data.get("hora_fin")
+
+        conflictos = self.find_conflicts(user_id, fecha, hora_inicio, hora_fin)
+
+        if conflictos.exists():
+            conflictos_serializados = ReunionSerializer(conflictos, many=True).data
+            return Response({
+                "status": "⚠️ Conflicto de horario detectado.",
+                "conflictos": conflictos_serializados
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        response = super().create(request, *args, **kwargs)
+
+        return Response({
+            "mensaje": "✅ Reunión creada exitosamente.",
+            "reunion": response.data
+        }, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        response = super().update(request, *args, **kwargs)
+
+        return Response({
+            "mensaje": "✅ Reunión modificada exitosamente.",
+            "reunion": response.data
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        response = super().destroy(request, *args, **kwargs)
+
+        return Response({
+            "mensaje": "✅ Reunión eliminada exitosamente.",
+            "reunion": {"id": instance.id, "nombre": instance.nombre, "fecha": instance.fecha}
+        }, status=status.HTTP_200_OK)
